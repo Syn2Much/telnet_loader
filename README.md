@@ -1,12 +1,15 @@
-# telnet_loader
-This is a multithreaded mirai telnet loader it connects to telenet combo/list and executes a user provided payload 
+# Tel0ader
+
+**This is a multithreaded telnet loader it connects to each telnet device in your combo list and executes the user provided command/payload. It does not crack passwords or do honeypot checks the tool you use to get the combos should handle that.**
+
+I reccomended bruteforcer https://github.com/CirqueiraDev/botnet-exploits/blob/main/bruteforce/brute.py
 
 
 # Example usage:
   
-  **python telnet_scan.py -l targets.txt -t 20 -c "whoami**
+  **python loader.py -l targets.txt -t 20 -c "whoami**
   
-  **python telnet_scan.py -l targets.txt -t 5 -o results.txt**
+  **python loader.py -l targets.txt -t 5 -o results.txt**
 ---
 
 Target file format (one per line):
