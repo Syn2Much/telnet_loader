@@ -82,8 +82,6 @@ python loader.py -l targets.txt -t 20 -c "uname -a" -o results.txt
 
 **This tool is for authorized testing only.**
 
-Unauthorized access, command execution, or abuse of Telnet services may violate:
-
 The author assumes **no liability** for misuse.
 
 ---
