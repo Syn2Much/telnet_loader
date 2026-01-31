@@ -1,26 +1,13 @@
 
 # Tel0ader 📡
 
-**Tel0ader** is a **multi-threaded Telnet command execution loader** designed for **mirai style combo list**.
+**Tel0ader** is a **multi-threaded Telnet command execution loader**  It connects to 
+Telnet-enabled devices using **pre-obtained credentials** and executes a **user-supplied command or payload** across multiple hosts concurrently.
 
-It connects to Telnet-enabled devices using **pre-obtained credentials** and executes a **user-supplied command or payload** across multiple hosts concurrently.
-
-> ⚠️ Tel0ader **does not brute-force credentials**, **does not bypass authentication**, and **does not perform honeypot detection**. Credential discovery must be handled separately.
-
----
-
-
-## ✨ Features
-
-* ⚡ **Multi-threaded execution**
-* 🔐 **Credential-based Telnet login**
-* 🧾 **Command output capture**
-* 📄 **Optional result logging to file**
-* ⏱️ **Configurable connection timeout**
-* 🧵 **Thread-safe console output**
-* 🧪 **Lightweight & dependency-free**
+> ⚠️ Tel0ader **does not brute-force credentials**, **does not bypass authentication**, and **does not perform honeypot detection**. Credential discovery must be handled separately. (https://github.com/CirqueiraDev/botnet-exploits/blob/main/bruteforce/brute.py)
 
 ---
+
 
 ## 📦 Requirements
 
@@ -81,7 +68,6 @@ python loader.py -l targets.txt -t 20 -c "uname -a" -o results.txt
 
 ---
 
-
 ## 📄 Output Behavior
 
 ### Console Output
@@ -90,21 +76,6 @@ python loader.py -l targets.txt -t 20 -c "uname -a" -o results.txt
 * Failures are marked with `[-]`
 * Errors include timeout, refusal, or disconnect reasons
 
-### Output File (`-o`)
-
-If specified, results are saved in two sections:
-
-* **Successful Connections**
-
-  * Host
-  * Username
-  * Command output
-* **Failed Connections**
-
-  * Host
-  * Error reason
-
----
 
 
 ## 🔒 Security & Legal Notice
@@ -113,15 +84,19 @@ If specified, results are saved in two sections:
 
 Unauthorized access, command execution, or abuse of Telnet services may violate:
 
-* Computer misuse laws
-* Network abuse policies
-* Terms of service
-
 The author assumes **no liability** for misuse.
 
 ---
+## ⚠️ Limitations
 
+Assumes standard Telnet login prompts
 
+* No shell detection ($ vs # is best-effort)
+* ASCII command encoding only
+* No retry logic
+* No per-target command variation
+* These are intentional design choices to keep the tool simple and auditable.
+---
 ## 📜 Version
 
 **tel0ader v1**
