@@ -1,7 +1,7 @@
 
 # Tel0ader 📡
 
-**Tel0ader** is a **multi-threaded Telnet command execution loader**  It connects to 
+> **Tel0ader** is a **multi-threaded Telnet command execution loader**  It connects to 
 Telnet-enabled devices using **pre-obtained credentials** and executes a **user-supplied command or payload** across multiple hosts concurrently.
 ---
 
