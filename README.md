@@ -3,11 +3,9 @@
 
 **Tel0ader** is a **multi-threaded Telnet command execution loader**  It connects to 
 Telnet-enabled devices using **pre-obtained credentials** and executes a **user-supplied command or payload** across multiple hosts concurrently.
-
-> ⚠️ Tel0ader **does not brute-force credentials**, **does not bypass authentication**, and **does not perform honeypot detection**. Credential discovery must be handled separately. (https://github.com/CirqueiraDev/botnet-exploits/blob/main/bruteforce/brute.py)
-
 ---
 
+<img width="1458" height="758" alt="image" src="https://github.com/user-attachments/assets/f0480a54-c53c-4b3a-982f-2d640aa96f1d" />
 
 ## 📦 Requirements
 
