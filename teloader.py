@@ -1,3 +1,4 @@
+import re
 import telnetlib
 import socket
 import argparse
@@ -111,47 +112,139 @@ def parse_target(target_line):
     return {'host': host, 'port': port, 'user': user, 'password': password}
 
 
+# Shell prompt patterns: (compiled regex, label, privilege level)
+SHELL_PROMPTS = [
+    (b"\\$ $",    "sh",      "user"),
+    (b"\\$\\ $",  "sh",      "user"),
+    (b"# $",      "root",    "root"),
+    (b"#\\ $",    "root",    "root"),
+    (b"> $",      "cli",     "user"),
+    (b">\\ $",    "cli",     "user"),
+    (b"% $",      "csh",     "user"),
+    (b"%\\ $",    "csh",     "user"),
+    (b"\\(.*\\)#", "busybox", "root"),
+    (b"\\(.*\\)\\$", "busybox", "user"),
+]
+
+# Raw byte patterns used by telnetlib.expect (order matters)
+_PROMPT_EXPECT = [pat for pat, _, _ in SHELL_PROMPTS]
+
+# Login failure signatures
+LOGIN_FAIL_PATTERNS = [
+    b"Login incorrect",
+    b"login incorrect",
+    b"Authentication failed",
+    b"authentication failed",
+    b"Access denied",
+    b"access denied",
+    b"Login failed",
+    b"login failed",
+    b"invalid login",
+    b"Invalid login",
+    b"bad password",
+    b"Bad password",
+    b"Permission denied",
+    b"incorrect password",
+]
+
+
+def detect_shell(data):
+    """Inspect raw bytes for known shell prompt signatures.
+
+    Returns (shell_label, privilege) or (None, None).
+    """
+    for pattern, label, priv in SHELL_PROMPTS:
+        if re.search(pattern, data):
+            return label, priv
+    return None, None
+
+
 def telnet_connect(target, command="uname -a"):
     """Connect to a single target and execute commands."""
     host = target['host']
     port = target['port']
     user = target['user']
     password = target['password']
-    
+
     result = {
         'host': host,
         'port': port,
         'user': user,
         'success': False,
         'output': '',
-        'error': ''
+        'error': '',
+        'shell': '',
+        'privilege': '',
     }
-    
+
     try:
         # Connect to the Telnet server
         tn = telnetlib.Telnet(host, port, timeout=TIMEOUT)
-        
+
         # Login process - handle different prompt styles
-        index, match, text = tn.expect([b"login: ", b"Login: ", b"Username: "], timeout=TIMEOUT)
+        index, match, text = tn.expect(
+            [b"login: ", b"Login: ", b"Username: ", b"username: "],
+            timeout=TIMEOUT,
+        )
+        if index == -1:
+            result['error'] = "No login prompt received"
+            tn.close()
+            return result
         tn.write(user.encode('ascii') + b"\n")
-        
-        index, match, text = tn.expect([b"Password: ", b"password: "], timeout=TIMEOUT)
+
+        index, match, text = tn.expect(
+            [b"Password: ", b"password: "],
+            timeout=TIMEOUT,
+        )
+        if index == -1:
+            result['error'] = "No password prompt received"
+            tn.close()
+            return result
         tn.write(password.encode('ascii') + b"\n")
-        
-        # Small delay to receive shell prompt
-        tn.read_until(b"$ ", timeout=3)  # or # for root
-        
+
+        # Wait for either a shell prompt or a login-failure message
+        post_login_expect = _PROMPT_EXPECT + LOGIN_FAIL_PATTERNS
+        index, match, text = tn.expect(post_login_expect, timeout=TIMEOUT)
+
+        if index == -1:
+            # Timeout — no recognisable prompt or failure string
+            result['error'] = "No shell prompt detected (unknown device)"
+            tn.close()
+            return result
+
+        if index >= len(_PROMPT_EXPECT):
+            # Matched a login-failure pattern
+            fail_msg = text.decode('ascii', errors='replace').strip()
+            result['error'] = f"Login rejected: {fail_msg}"
+            tn.close()
+            return result
+
+        # Matched a shell prompt — identify it
+        shell_label, privilege = SHELL_PROMPTS[index][1], SHELL_PROMPTS[index][2]
+
+        # Secondary heuristic: scan the full received text for busybox / device hints
+        post_text = text.decode('ascii', errors='replace').lower()
+        if 'busybox' in post_text:
+            shell_label = "busybox"
+        elif 'mikrotik' in post_text:
+            shell_label = "mikrotik"
+        elif '/tc/' in post_text or 'procd' in post_text:
+            shell_label = "openwrt"
+
+        result['shell'] = shell_label
+        result['privilege'] = privilege
+
         # Execute command
         tn.write(command.encode('ascii') + b"\n")
         tn.write(b"exit\n")
-        
+
         # Read and store the output
         output = tn.read_all().decode('ascii', errors='replace')
         result['output'] = output.strip()
         result['success'] = True
-        
+
         tn.close()
-        
+
     except socket.timeout:
         result['error'] = "Connection timed out"
     except ConnectionRefusedError:
@@ -160,7 +253,7 @@ def telnet_connect(target, command="uname -a"):
         result['error'] = "Connection closed by remote host"
     except Exception as e:
         result['error'] = str(e)
-    
+
     return result
 
 
@@ -254,9 +347,12 @@ Target file format (one per line):
 
             if result['success']:
                 successful += 1
+                shell_tag = result['shell'] or "unknown"
+                priv_tag = result['privilege'] or "?"
                 text = (
                     f"{GREEN}[+] SUCCESS: {result['host']}:{result['port']} "
-                    f"({result['user']}){RST}\n"
+                    f"({result['user']}) "
+                    f"[{YELLOW}{shell_tag}{RST} | {CYAN}{priv_tag}{RST}]{RST}\n"
                     f"    Output: {result['output'][:200]}"
                 )
                 display_result(text, total, successful, successful, remaining)
@@ -283,6 +379,7 @@ Target file format (one per line):
                 if r['success']:
                     f.write(f"Host: {r['host']}:{r['port']}\n")
                     f.write(f"User: {r['user']}\n")
+                    f.write(f"Shell: {r['shell'] or 'unknown'} ({r['privilege'] or '?'})\n")
                     f.write(f"Output:\n{r['output']}\n")
                     f.write("-" * 40 + "\n\n")
             
