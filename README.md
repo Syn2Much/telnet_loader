@@ -87,15 +87,15 @@ The author assumes **no liability** for misuse.
 
 Assumes standard Telnet login prompts
 
-* No shell detection ($ vs # is best-effort)
 * ASCII command encoding only
 * No retry logic
 * No per-target command variation
 * These are intentional design choices to keep the tool simple and auditable.
+
 ---
 ## 📜 Version
 
-**tel0ader v1**
+**tel0ader v2**
 Developed by **@Syn2Much**
 
 ---
