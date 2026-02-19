@@ -11,8 +11,8 @@
 
 ## 📦 Requirements
 
-* Python **3.8+**
-* No external dependencies (stdlib only)
+* Python 3.11 or lower
+* telnetlib
 * Valid Telnet credentials
 * Explicit authorization to test targets
 
