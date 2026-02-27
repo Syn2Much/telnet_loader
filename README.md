@@ -1,128 +1,205 @@
-# Tel0ader
+# telnet_loader
 
-A multi-threaded Telnet command execution loader that connects to Telnet-enabled devices using pre-obtained credentials and executes a user-supplied command across multiple hosts concurrently — with shell detection, login validation, and a live status counter.
+Multi-threaded Telnet command loader. Connects to Telnet-enabled devices using pre-obtained credentials and executes commands across multiple hosts concurrently. Features shell detection, login validation, honeypot detection, retry logic, per-target timeouts, and incremental result output with a live status counter.
 
-> Tel0ader does **not** brute-force credentials, bypass authentication, or perform honeypot detection. Credential discovery must be handled separately.
+Tel0ader does not brute-force credentials or bypass authentication. Credential discovery must be handled separately.
 
-**This tool is for authorized testing only.** The author assumes no liability for misuse.
+**For authorized testing only.** The author assumes no liability for misuse.
 
 ---
 
-## Setup
+## Requirements
 
-`telnetlib` was removed in Python 3.13 (deprecated since 3.11 via PEP 594). You need a Python environment that still includes it.
+`telnetlib` was removed in Python 3.13 (PEP 594). You need Python 3.12 or earlier.
 
-### Using pyenv (recommended)
+No external dependencies. Everything is stdlib (`telnetlib`, `threading`, `argparse`, `re`, `time`, `socket`).
+
+### pyenv (recommended)
 
 ```bash
-# Install pyenv if you don't have it
-curl https://pyenv.run | bash
-
-# Install Python 3.11 and create a local env
 pyenv install 3.11.9
 pyenv local 3.11.9
-
-# Verify
-python --version   # Python 3.11.9
-python -c "import telnetlib; print('telnetlib available')"
+python -c "import telnetlib; print('ok')"
 ```
 
-### Using conda
+### conda
 
 ```bash
 conda create -n tel0ader python=3.11 -y
 conda activate tel0ader
 ```
 
-### Using venv (if 3.11 is already installed)
+### venv (if 3.11 is already installed)
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
-No additional dependencies — `telnetlib`, `threading`, and `argparse` are all stdlib.
-
 ---
 
-## Target List Format
+## Target File Format
 
-Targets are provided via a file, one per line:
+One target per line:
 
 ```
-IP:PORT USER:PASSWORD
+HOST:PORT USER:PASSWORD
 ```
 
-Port defaults to `23` if omitted. Password can be empty.
+Port defaults to `23` if omitted. Password can be empty (use `user:` with no value after the colon).
+
+Example `targets.txt`:
 
 ```
 18.181.177.7:23 root:root
 221.1.120.79:23 admin:admin
 192.168.1.1 admin:password
+10.0.0.5:2323 user:
 ```
 
 ---
 
 ## Usage
 
-```bash
-python teloader.py -l targets.txt -t 20 -c "uname -a" -o results.txt
+```
+python teloader.py -l <target_file> [options]
 ```
 
-| Flag            | Description                                          |
-| --------------- | ---------------------------------------------------- |
-| `-l, --list`    | File containing target list (required)               |
-| `-t, --threads` | Number of concurrent threads (default: `10`)         |
-| `-c, --command` | Command to execute after login (default: `uname -a`) |
-| `-o, --output`  | File to save results                                 |
-| `--timeout`     | Connection timeout in seconds (default: `10`)        |
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-l, --list` | string | (required) | Path to target list file |
+| `-t, --threads` | int | `10` | Number of concurrent threads |
+| `-c, --command` | string | `uname -a` | Command to execute after login |
+| `-o, --output` | string | (none) | Output file for results |
+| `--timeout` | int | `10` | Per-operation timeout in seconds (connect, login prompt, password prompt, post-login) |
+| `--max-time` | int | `4 * timeout` | Max total wall-clock seconds per target. Caps the entire login+execute cycle so a slow phase can't consume unbounded time |
+| `--retries` | int | `0` | Number of retries for transient failures (timeout, refused, reset, EOF). Auth failures are never retried |
+
+### Examples
+
+Basic scan with 20 threads:
+
+```bash
+python teloader.py -l targets.txt -t 20
+```
+
+Custom command with output file:
+
+```bash
+python teloader.py -l targets.txt -t 10 -c "cat /proc/cpuinfo" -o results.txt
+```
+
+Aggressive timeout with retries:
+
+```bash
+python teloader.py -l targets.txt -t 50 --timeout 5 --max-time 15 --retries 2
+```
+
+Monitor results in real time from another terminal:
+
+```bash
+tail -f results.txt
+```
 
 ---
 
 ## How It Works
 
 1. Parses targets from the input file (host, port, user, password).
-2. Spawns a thread pool and connects to each target via Telnet.
-3. For each target: waits for a login prompt, sends credentials, validates authentication (fails fast on rejection messages like `Login incorrect` or `Access denied`), detects shell type and privilege level, executes the supplied command, captures output, and disconnects.
-4. Prints a colored summary and optionally writes detailed results to disk.
+2. Opens the output file for incremental writing (if `-o` is specified).
+3. Spawns a thread pool and connects to each target via Telnet.
+4. For each target:
+   - Connects with the configured timeout.
+   - Waits for a login prompt, sends username.
+   - Waits for a password prompt, sends password.
+   - Checks for login failure messages (`Login incorrect`, `Access denied`, etc.) or a shell prompt.
+   - Detects shell type and privilege level from the prompt pattern.
+   - Runs honeypot detection against banner data and login timing.
+   - Sends the command followed by `exit`.
+   - Reads output using a deadline-bounded loop (never blocks indefinitely).
+   - Writes the result to the output file immediately (thread-safe, flushed).
+5. If the connection fails with a transient error and `--retries` > 0, retries with brief backoff (0.5s increments, max 2s).
+6. Prints a colored summary to the console.
+
+Every `expect()` call respects both `--timeout` (per-operation) and `--max-time` (per-target total), using whichever is smaller. This prevents any single slow phase from stalling the entire target.
 
 ---
 
 ## Shell Detection
 
-After successful auth, the prompt pattern is matched to identify the shell environment:
+After successful login, the prompt is matched against known patterns:
 
-| Prompt Pattern     | Label      | Privilege |
-| ------------------ | ---------- | --------- |
-| `$ `               | `sh`       | user      |
-| `# `               | `root`     | root      |
-| `> `               | `cli`      | user      |
-| `% `               | `csh`      | user      |
-| `(hostname)#`      | `busybox`  | root      |
-| `(hostname)$`      | `busybox`  | user      |
+| Prompt Pattern | Label | Privilege |
+|----------------|-------|-----------|
+| `$ ` | sh | user |
+| `# ` | root | root |
+| `> ` | cli | user |
+| `% ` | csh | user |
+| `(hostname)#` | busybox | root |
+| `(hostname)$` | busybox | user |
 
-Secondary heuristics refine detection by scanning post-login text for keywords like `busybox`, `mikrotik`, `procd`, or `/tc/` (OpenWrt).
+Post-login text is also scanned for keywords: `busybox`, `mikrotik`, `procd`, `/tc/` (OpenWrt). These override the prompt-based label when found.
 
 ---
 
-## Output
+## Honeypot Detection
 
-**Console:** `[+]` for successful connections (with shell tag like `[sh | root]`), `[-]` for failures with reason.
+Banner data and login timing are checked for common honeypot indicators:
 
-**File (`-o`):** Results split into successful and failed sections. Successful entries include host, user, detected shell/privilege, and command output.
+- **Signature matching:** Scans for known honeypot software names in banner text (kippo, cowrie, dionaea, HonSSH, etc.).
+- **Timing heuristic:** Flags logins that complete in under 50ms as suspicious, since real devices have measurable auth latency.
 
-**Live counter** stays pinned at the bottom of the terminal during execution showing total, logins, commands executed, and remaining targets.
+When a honeypot is detected, results are tagged with the reason (e.g., `HONEYPOT: honeypot signature: cowrie` or `HONEYPOT: suspiciously fast login response`). This appears in both console output and the output file.
+
+---
+
+## Output Format
+
+### Console
+
+Live counter pinned at the bottom of the terminal during execution:
+
+```
+  [Total: 100]  [Logins: 12]  [Commands: 12]  [Remaining: 88]
+```
+
+Results print above the counter as they arrive:
+
+```
+[+] SUCCESS: 10.0.0.1:23 (root) [busybox | root]
+    Output: Linux device 4.14.81 armv7l GNU/Linux
+[-] FAILED: 10.0.0.2:23 - Connection timed out
+```
+
+### File (`-o`)
+
+Results are written incrementally as they complete, one line per target:
+
+```
+[+] 10.0.0.1:23 (root) [busybox | root]
+    Linux device 4.14.81 armv7l GNU/Linux
+[-] 10.0.0.2:23 - Connection timed out
+```
+
+A summary line is appended at the end:
+
+```
+Summary: 12 successful, 88 failed, 100 total
+```
+
+Because results are flushed immediately, the output file is crash-safe. Completed results are never lost even if the process is killed.
 
 ---
 
 ## Limitations
 
-- ASCII command encoding only
-- No retry logic
-- No per-target command variation
-- `telnetlib` is deprecated since Python 3.11 (PEP 594) — see [Setup](#setup)
-- These are intentional design choices to keep the tool simple and auditable.
+- ASCII command encoding only.
+- No per-target command variation.
+- No SOCKS/proxy support.
+- `telnetlib` is deprecated since Python 3.11 (PEP 594) and removed in 3.13.
 
 ---
 
-tel0ader v2 — [@Syn2Much](https://github.com/Syn2Much)
+tel0ader v3 -- [@Syn2Much](https://github.com/Syn2Much)
