@@ -4,7 +4,6 @@ Multi-threaded Telnet command loader. Connects to Telnet-enabled devices using p
 
 Tel0ader does not brute-force credentials or bypass authentication. Credential discovery must be handled separately.
 
-**For authorized testing only.** The author assumes no liability for misuse.
 
 ---
 
