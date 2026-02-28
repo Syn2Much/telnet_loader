@@ -145,13 +145,11 @@ Post-login text is also scanned for keywords: `busybox`, `mikrotik`, `procd`, `/
 
 ## Honeypot Detection
 
-Banner data and login timing are checked for common honeypot indicators:
+Banner data is checked for common honeypot indicators:
 
 - **Signature matching:** Scans for known honeypot software names in banner text (kippo, cowrie, dionaea, HonSSH, etc.).
-- **Timing heuristic:** Flags logins that complete in under 50ms as suspicious, since real devices have measurable auth latency.
 
-When a honeypot is detected, results are tagged with the reason (e.g., `HONEYPOT: honeypot signature: cowrie` or `HONEYPOT: suspiciously fast login response`). This appears in both console output and the output file.
-
+When a honeypot is detected, results are tagged with the reason (e.g., `HONEYPOT: honeypot signature: cowrie`). This appears in both console output and the output file.
 ---
 
 ## Output Format
