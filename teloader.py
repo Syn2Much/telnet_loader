@@ -160,28 +160,30 @@ LOGIN_FAIL_PATTERNS = [
     re.compile(b"incorrect password"),
 ]
 
-# Honeypot detection: known software names that appear in banners/MOTD.
+# Honeypot detection: specific software names that appear in banners/MOTD.
 # Only match strings that definitively identify honeypot software.
-# Avoid matching generic device banners (BusyBox, ash, etc.) that real
-# embedded devices also produce.
+# Word-boundary anchored to prevent substring false matches.
+# Removed generic words ("honeypot", "glutton") that cause false positives
+# on real devices with security warnings or English-language MOTDs.
 _HONEYPOT_SIGNATURES = [
-    re.compile(b"kippo", re.IGNORECASE),
-    re.compile(b"cowrie", re.IGNORECASE),
-    re.compile(b"honeypot", re.IGNORECASE),
-    re.compile(b"dionaea", re.IGNORECASE),
-    re.compile(b"HonSSH", re.IGNORECASE),
-    re.compile(b"Telnet Honey", re.IGNORECASE),
-    re.compile(b"honeytrap", re.IGNORECASE),
-    re.compile(b"glutton", re.IGNORECASE),
+    re.compile(rb"\bkippo\b", re.IGNORECASE),
+    re.compile(rb"\bcowrie\b", re.IGNORECASE),
+    re.compile(rb"\bdionaea\b", re.IGNORECASE),
+    re.compile(rb"\bhonssh\b", re.IGNORECASE),
+    re.compile(rb"\btelnet.honey\b", re.IGNORECASE),
+    re.compile(rb"\bhoneytrap\b", re.IGNORECASE),
+    re.compile(rb"\bheralding\b", re.IGNORECASE),
+    re.compile(rb"\bconpot\b", re.IGNORECASE),
+    re.compile(rb"\btpotce\b", re.IGNORECASE),
 ]
 
 
 def detect_honeypot(banner_data):
     """Check for known honeypot software names in banner/session data.
 
-    Only flags definitive signatures. Does NOT flag based on timing or
-    generic banners (BusyBox, ash, etc.) to avoid false positives on
-    real embedded devices.
+    Only flags definitive, word-boundary-anchored signatures of known
+    honeypot frameworks.  Does NOT flag generic words like "honeypot"
+    or timing anomalies to avoid false positives on real devices.
 
     Returns a string describing the honeypot indicator, or None.
     """
@@ -291,10 +293,13 @@ def telnet_connect(target, command="uname -a", timeout=10, max_time=None):
         result["shell"] = shell_label
         result["privilege"] = privilege
 
-        # Honeypot detection
+        # Honeypot detection — bail out before sending any command
         hp = detect_honeypot(banner_data)
         if hp:
             result["honeypot"] = hp
+            result["error"] = f"Honeypot detected ({hp}), command not sent"
+            tn.close()
+            return result
 
         # Execute command
         tn.write(command.encode("ascii") + b"\n")
@@ -499,19 +504,32 @@ Target file format (one per line):
 
                 remaining = total - len(results)
 
-                if result["success"]:
+                if result.get("honeypot"):
+                    # Honeypot — counted as failure, shown distinctly
+                    failed += 1
+                    text = (
+                        f"{RED}[!] HONEYPOT: {result['host']}:{result['port']} "
+                        f"({result['user']}) — {result['honeypot']} "
+                        f"(command skipped){RST}"
+                    )
+                    display_result(text, total, successful, successful, remaining)
+
+                    if out_file:
+                        with file_lock:
+                            out_file.write(
+                                f"[!] HONEYPOT {result['host']}:{result['port']} "
+                                f"({result['user']}) — {result['honeypot']} "
+                                f"(command skipped)\n"
+                            )
+                            out_file.flush()
+                elif result["success"]:
                     successful += 1
                     shell_tag = result["shell"] or "unknown"
                     priv_tag = result["privilege"] or "?"
-                    hp_tag = (
-                        f" {RED}[HONEYPOT: {result['honeypot']}]{RST}"
-                        if result.get("honeypot")
-                        else ""
-                    )
                     text = (
                         f"{GREEN}[+] SUCCESS: {result['host']}:{result['port']} "
                         f"({result['user']}) "
-                        f"[{YELLOW}{shell_tag}{RST} | {CYAN}{priv_tag}{RST}]{hp_tag}{RST}\n"
+                        f"[{YELLOW}{shell_tag}{RST} | {CYAN}{priv_tag}{RST}]{RST}\n"
                         f"    Output: {result['output'][:200]}"
                     )
                     display_result(text, total, successful, successful, remaining)
@@ -519,16 +537,10 @@ Target file format (one per line):
                     # Incremental file write
                     if out_file:
                         with file_lock:
-                            hp_note = (
-                                f"  *** HONEYPOT: {result['honeypot']} ***\n"
-                                if result.get("honeypot")
-                                else ""
-                            )
                             out_file.write(
                                 f"[+] {result['host']}:{result['port']} "
                                 f"({result['user']}) "
                                 f"[{result['shell'] or 'unknown'} | {result['privilege'] or '?'}]\n"
-                                f"{hp_note}"
                                 f"    {result['output'][:500]}\n"
                             )
                             out_file.flush()
