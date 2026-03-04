@@ -1,8 +1,23 @@
 # telnet_loader
 
-Multi-threaded Telnet command loader. Connects to Telnet-enabled devices using pre-obtained credentials and executes commands across multiple hosts concurrently. Features shell detection, login validation, honeypot detection, retry logic, per-target timeouts, and incremental result output with a live status counter.
+Features shell detection, login validation, honeypot detection, retry logic, per-target timeouts, and incremental result output with a live status counter.
 
-Tel0ader does not brute-force credentials or bypass authentication. Credential discovery must be handled separately.
+## How It Works
+
+1. Parses targets from the input file (host, port, user, password).
+2. Opens the output file for incremental writing (if `-o` is specified).
+3. Spawns a thread pool and connects to each target via Telnet.
+4. For each target:
+   - Connects with the configured timeout.
+   - Checks for login failure messages (`Login incorrect`, `Access denied`, etc.) or a shell prompt.
+   - Runs honeypot detection 
+   - Sends the command followed by `exit`.
+   - Reads output using a deadline-bounded loop (never blocks indefinitely).
+   - Writes the result to the output file immediately (thread-safe, flushed).
+5. Prints a colored summary to the console.
+
+
+> Tel0ader does not brute-force credentials or bypass authentication. Credential discovery must be handled separately.
 
 
 ---
@@ -104,25 +119,6 @@ tail -f results.txt
 
 ---
 
-## How It Works
-
-1. Parses targets from the input file (host, port, user, password).
-2. Opens the output file for incremental writing (if `-o` is specified).
-3. Spawns a thread pool and connects to each target via Telnet.
-4. For each target:
-   - Connects with the configured timeout.
-   - Waits for a login prompt, sends username.
-   - Waits for a password prompt, sends password.
-   - Checks for login failure messages (`Login incorrect`, `Access denied`, etc.) or a shell prompt.
-   - Detects shell type and privilege level from the prompt pattern.
-   - Runs honeypot detection against banner data and login timing.
-   - Sends the command followed by `exit`.
-   - Reads output using a deadline-bounded loop (never blocks indefinitely).
-   - Writes the result to the output file immediately (thread-safe, flushed).
-5. If the connection fails with a transient error and `--retries` > 0, retries with brief backoff (0.5s increments, max 2s).
-6. Prints a colored summary to the console.
-
-Every `expect()` call respects both `--timeout` (per-operation) and `--max-time` (per-target total), using whichever is smaller. This prevents any single slow phase from stalling the entire target.
 
 ---
 
