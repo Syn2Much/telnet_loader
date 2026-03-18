@@ -196,3 +196,4 @@ Because results are flushed immediately, the output file is crash-safe. Complete
 ---
 
 tel0ader v3 -- [@Syn2Much](https://github.com/Syn2Much)
+[hell@sinnners.city](mailto:hell@sinnners.city) 
