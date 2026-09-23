@@ -1,5 +1,6 @@
 
 # Teloader
+<img width="803" height="330" alt="image" src="https://github.com/user-attachments/assets/9c065a7d-04f3-48f2-a64f-eff1c3ca3587" />
 
 > Telnet brute-force / loader tool with live progress, graceful shutdown, and command execution.
 
